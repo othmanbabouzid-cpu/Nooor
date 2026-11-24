@@ -1,0 +1,101 @@
+name: Build NourQuran APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Unpack Project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f NourQuran-source.zip ]; then
+            rm -rf source
+            mkdir -p source
+            unzip -q NourQuran-source.zip -d source
+          fi
+          if [ ! -f source/NourQuran/settings.gradle ]; then
+            echo "::error::Project not found. Upload NourQuran-source.zip to the repository root."
+            exit 1
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '15859902'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'platform-tools'
+
+      - name: Install Android 35 SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sdkmanager --install "platforms;android-35" "build-tools;35.0.0"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Android SDK installation failed."
+              exit 1
+            fi
+            sleep 20
+          done
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Grant Execute Permission
+        working-directory: source/NourQuran
+        shell: bash
+        run: |
+          if [ -f gradlew ]; then chmod +x gradlew; fi
+
+      - name: Build Debug APK
+        working-directory: source/NourQuran
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -x ./gradlew ]; then
+            ./gradlew --no-daemon :app:assembleDebug
+          else
+            gradle --no-daemon :app:assembleDebug
+          fi
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source/NourQuran/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh source/NourQuran/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NourQuran-debug-APK
+          path: source/NourQuran/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
